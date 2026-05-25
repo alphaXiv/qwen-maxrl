@@ -89,7 +89,15 @@ def _install_maxrl_advantage():
     # The method uses zero-arg super(), which needs a __class__ closure cell that
     # only exists when defined lexically inside a class body. Re-exec'ing the
     # source standalone loses it ("super(): __class__ cell not found"), so we wrap
-    # it in a factory whose __class__ parameter recreates that cell.
+    # it in a factory whose __class__ parameter recreates that cell. We must reuse
+    # the *original* __class__ value (the class the method was compiled in), not
+    # trl.GRPOTrainer — otherwise super()._prepare_inputs resolves to the GRPO
+    # layer instead of skipping to Trainer, causing infinite recursion.
+    if "__class__" in inner.__code__.co_freevars:
+        ci = inner.__code__.co_freevars.index("__class__")
+        bound_class = inner.__closure__[ci].cell_contents
+    else:
+        bound_class = trl.GRPOTrainer
     g = dict(inner.__globals__)
     factory_src = (
         "def __maxrl_factory(__class__):\n"
@@ -97,7 +105,7 @@ def _install_maxrl_advantage():
         + "\n    return _generate_and_score_completions\n"
     )
     exec(compile(factory_src, "<maxrl-patch>", "exec"), g)
-    patched = g["__maxrl_factory"](trl.GRPOTrainer)
+    patched = g["__maxrl_factory"](bound_class)
 
     if restore_wrapped:
         # Re-apply unsloth's "restore to inference mode after scoring" wrapper.
